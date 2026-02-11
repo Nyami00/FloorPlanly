@@ -1,0 +1,172 @@
+# FloorPlanly 実装計画（GitHub公開前提）
+
+## 1. ゴール
+- GitHubリポジトリ `Nyami00/FloorPlanly` に配置して、ブラウザで使える間取り編集アプリを公開する。
+- ユーザーが直感的に「間取りの追加・削除・編集」を行える。
+- PC/スマホの両方で最低限操作できる。
+
+## 2. 公開方式
+- フロントエンドのみの SPA（React + Vite）として実装。
+- 配信先は GitHub Pages。
+- データ保存はローカル（`localStorage` + JSON入出力）。
+
+## 3. 必須機能（MVP）
+- 2Dグリッドキャンバス上で部屋を表示。
+- 部屋の追加。
+- 部屋の削除。
+- 部屋の移動（ドラッグ）。
+- 部屋サイズ変更（幅/奥行）。
+- 部屋回転（w/h入れ替え）。
+- ドアの追加。
+- ドアの削除。
+- ドア種類変更（開き戸/引き戸など）。
+- フロア切替（1F/2F）。
+- JSONエクスポート/インポート。
+- 変更状態の自動保存（localStorage）。
+
+## 4. 追加推奨機能（優先度順）
+- Undo / Redo（履歴管理）。
+- オーバーラップ警告（部屋重なり検出）。
+- 面積集計（畳/㎡切替）。
+- スナップ（0.5セルまたは1セル）。
+- キーボード操作（Delete, Ctrl+Z/Ctrl+Y）。
+- PNG出力（共有・印刷用）。
+
+## 5. 非機能要件
+- 初回表示 3秒以内（一般的な回線での GitHub Pages 想定）。
+- 主要ブラウザ（Chrome / Edge / Safari 最新）で表示崩れなし。
+- モバイル幅 390px で操作可能。
+- エラー時はトーストなどで明示し、無言失敗を避ける。
+
+## 6. データモデル案
+```ts
+export type Room = {
+  id: string;
+  floor: 1 | 2;
+  name: string;
+  category: "living" | "room" | "water" | "storage" | "hall" | "stair" | "entrance" | "free";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+export type Door = {
+  id: string;
+  floor: 1 | 2;
+  x: number;
+  y: number;
+  orient: "h" | "v";
+  type: "hinged-r" | "hinged-l" | "sliding" | "folding" | "pocket";
+  width: 1 | 2 | 3 | 4;
+};
+
+export type PlanState = {
+  version: 1;
+  grid: { cols: number; rows: number; cell: number };
+  rooms: Room[];
+  doors: Door[];
+};
+```
+
+## 7. 画面構成
+- ヘッダー：アプリ名、現在フロア、保存状態。
+- ツールバー：編集モード切替（部屋/扉）、追加、削除、リセット、入出力。
+- キャンバス：SVGでグリッド・部屋・扉を描画。
+- サイドパネル：選択要素のプロパティ編集。
+- 通知領域：保存完了、読込失敗、重なり警告。
+
+## 8. 実装ステップ
+1. Vite + React + TypeScript プロジェクト作成。
+2. 既存の下書きロジックを `src/App.tsx` と `src/features/*` に分割。
+3. `Room` の追加/削除/移動/サイズ変更のユースケースを先に完成。
+4. `Door` の追加/削除/編集を追加。
+5. `localStorage` 永続化と JSON 入出力を追加。
+6. Undo/Redo とバリデーション（重なり・範囲外）を追加。
+7. レスポンシブ調整（スマホ最小対応）。
+8. GitHub Actions + Pages デプロイ設定。
+9. README 整備（使い方、開発方法、公開URL）。
+
+## 9. GitHub Pages 公開手順
+1. リポジトリに以下を配置。
+- `package.json`
+- `vite.config.ts`（`base: "/FloorPlanly/"`）
+- `src/*`
+- `.github/workflows/deploy.yml`
+2. `main` ブランチへ push。
+3. GitHub の `Settings > Pages` で `Build and deployment: GitHub Actions` を選択。
+4. Actions 成功後、公開URLにアクセス。
+- `https://nyami00.github.io/FloorPlanly/`
+
+## 10. deploy.yml の最小構成
+```yml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+## 11. README に必ず書く内容
+- アプリ概要（何ができるか）。
+- 操作方法（部屋追加/削除、扉追加/削除、保存/読込）。
+- ローカル起動方法。
+- 公開URL。
+- 既知の制限（例: 壁芯計算は未対応）。
+
+## 12. 受け入れ基準（リリース判定）
+- 公開URLでページが開く。
+- 1F/2F どちらでも部屋の追加・削除ができる。
+- 1F/2F どちらでも扉の追加・削除ができる。
+- ページ再読込後も前回状態が復元される。
+- JSON保存→JSON読込で同じ状態が再現される。
+- スマホ幅で主要操作（選択、追加、削除）が可能。
+
+## 13. タスク分解（Issue化テンプレート）
+- `feat: initialize vite-react-ts project for FloorPlanly`
+- `feat: implement room add/delete/move/resize on grid`
+- `feat: implement door add/delete/edit on grid`
+- `feat: add localStorage persistence and JSON IO`
+- `feat: add undo/redo and overlap validation`
+- `chore: add github pages deployment workflow`
+- `docs: update README with usage and deployment URL`
+
+## 14. 今回の方針
+- まずは「使えること」を優先して MVP を完成させる。
+- その後に Undo/Redo、PNG出力などを段階追加する。
+- 仕様を増やしすぎず、毎回 GitHub Pages 上で動作確認しながら進める。
