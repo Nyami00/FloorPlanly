@@ -1,44 +1,47 @@
-# FloorPlanly
+# 間取りシミュレータ FloorPlanly
 
-A browser-based floor plan editor built with React + Vite.
+ブラウザ上で使える、2フロア対応の間取り編集アプリです。  
+React + Vite で構成されています。
 
-## Features
+## 主な機能
 
-- Edit 1F / 2F plans independently.
-- Add / delete rooms.
-- Drag rooms, resize, and rotate.
-- Add / delete doors.
-- Switch door type, orientation, and width.
-- Local autosave with `localStorage`.
-- Export / import project JSON.
+- 1F / 2F の切り替え
+- 部屋の追加・削除
+- 部屋のドラッグ移動
+- 部屋サイズ変更（幅・奥行）
+- 部屋の回転
+- 扉の追加・削除
+- 扉タイプ・向き・幅の変更
+- `localStorage` 自動保存
+- JSON 書き出し / 読み込み
 
-## Local Development
+## ローカル実行
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Build
+## ビルド
 
 ```bash
 npm run build
 npm run preview
 ```
 
-## GitHub Pages Deployment
+## GitHub Pages 公開手順
 
-This repository includes `.github/workflows/deploy.yml` for Pages deployment.
+このリポジトリには `.github/workflows/deploy.yml` が含まれています。
 
-1. Push to `main`.
-2. Open `Settings > Pages`.
-3. Set `Build and deployment` to `GitHub Actions`.
-4. After workflow success, open:
+1. `main` ブランチへ push
+2. `Settings > Pages` を開く
+3. `Build and deployment` を `GitHub Actions` に設定
+4. workflow 成功後、以下URLで公開
    `https://nyami00.github.io/FloorPlanly/`
 
-## Data Format
+## データ形式
 
-Exported JSON:
+書き出し JSON の形式:
 
 ```json
 {
@@ -47,3 +50,8 @@ Exported JSON:
   "doors": { "1": [], "2": [] }
 }
 ```
+
+## ライセンス
+
+このプロジェクトは `Sushi License 1.0` です。  
+詳細は `LICENSE` を参照してください。

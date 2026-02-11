@@ -3,181 +3,729 @@ import "./App.css";
 
 type Floor = 1 | 2;
 type Mode = "room" | "door";
-type Cat = "living" | "room" | "water" | "storage" | "free";
+type Category = "living" | "room" | "water" | "storage" | "free";
 type DoorType = "hinged-r" | "hinged-l" | "sliding" | "folding" | "pocket";
 type DoorOrient = "h" | "v";
-type Drag = { kind: "room" | "door"; id: string; ox: number; oy: number } | null;
+type DragState = { kind: "room" | "door"; id: string; ox: number; oy: number } | null;
 
-type Room = { id: string; name: string; cat: Cat; x: number; y: number; w: number; h: number };
-type Door = { id: string; x: number; y: number; orient: DoorOrient; type: DoorType; width: 1 | 2 | 3 | 4 };
-type Saved = { version: 1; rooms: Record<Floor, Room[]>; doors: Record<Floor, Door[]> };
+type Room = {
+  id: string;
+  name: string;
+  category: Category;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
 
-const C = 34;
-const GW = 14;
-const GH = 12;
-const W = GW * C;
-const H = GH * C;
-const KEY = "floorplanly-v1";
+type Door = {
+  id: string;
+  x: number;
+  y: number;
+  orient: DoorOrient;
+  type: DoorType;
+  width: 1 | 2 | 3 | 4;
+};
 
-const INIT_ROOMS: Record<Floor, Room[]> = {
+type SavedState = {
+  version: 1;
+  rooms: Record<Floor, Room[]>;
+  doors: Record<Floor, Door[]>;
+};
+
+const CELL = 34;
+const GRID_W = 14;
+const GRID_H = 12;
+const CANVAS_W = GRID_W * CELL;
+const CANVAS_H = GRID_H * CELL;
+const STORAGE_KEY = "floorplanly-v1";
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  living: "LDK",
+  room: "居室",
+  water: "水回り",
+  storage: "収納",
+  free: "フリー",
+};
+
+const DOOR_TYPE_LABELS: Record<DoorType, string> = {
+  "hinged-r": "開き戸(右)",
+  "hinged-l": "開き戸(左)",
+  sliding: "引き戸",
+  folding: "折れ戸",
+  pocket: "片引き戸",
+};
+
+const CATEGORY_COLORS: Record<Category, string> = {
+  living: "rgba(243,171,97,.3)",
+  water: "rgba(101,189,233,.3)",
+  storage: "rgba(167,133,205,.3)",
+  free: "rgba(96,194,171,.3)",
+  room: "rgba(131,197,145,.3)",
+};
+
+const INITIAL_ROOMS: Record<Floor, Room[]> = {
   1: [
-    { id: "r1", name: "Living", cat: "living", x: 3, y: 7, w: 5, h: 4 },
-    { id: "r2", name: "Dining", cat: "living", x: 8, y: 7, w: 4, h: 4 },
-    { id: "r3", name: "Bath", cat: "water", x: 10, y: 4, w: 2, h: 2 },
+    { id: "r1", name: "リビング", category: "living", x: 3, y: 7, w: 5, h: 4 },
+    { id: "r2", name: "ダイニング", category: "living", x: 8, y: 7, w: 4, h: 4 },
+    { id: "r3", name: "浴室", category: "water", x: 10, y: 4, w: 2, h: 2 },
   ],
   2: [
-    { id: "r4", name: "Main", cat: "room", x: 0, y: 6, w: 5, h: 3 },
-    { id: "r5", name: "Kids", cat: "room", x: 0, y: 0, w: 4, h: 3 },
-    { id: "r6", name: "Free", cat: "free", x: 5, y: 9, w: 4, h: 3 },
+    { id: "r4", name: "主寝室", category: "room", x: 0, y: 6, w: 5, h: 3 },
+    { id: "r5", name: "子ども室", category: "room", x: 0, y: 0, w: 4, h: 3 },
+    { id: "r6", name: "フリースペース", category: "free", x: 5, y: 9, w: 4, h: 3 },
   ],
 };
-const INIT_DOORS: Record<Floor, Door[]> = {
+
+const INITIAL_DOORS: Record<Floor, Door[]> = {
   1: [{ id: "d1", x: 6, y: 7, orient: "h", type: "hinged-r", width: 2 }],
   2: [{ id: "d2", x: 5, y: 7.5, orient: "v", type: "sliding", width: 2 }],
 };
 
 const DOOR_TYPES: DoorType[] = ["hinged-r", "hinged-l", "sliding", "folding", "pocket"];
-const CATS: Cat[] = ["living", "room", "water", "storage", "free"];
-const uid = (p: string): string => `${p}-${Math.random().toString(36).slice(2, 8)}`;
-const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
-const snap = (v: number): number => Math.round(v * 2) / 2;
-const clone = <T extends object>(o: Record<Floor, T[]>): Record<Floor, T[]> => ({ 1: o[1].map((v) => ({ ...v })), 2: o[2].map((v) => ({ ...v })) });
-const badRooms = (rooms: Room[]): Set<string> => {
-  const g = new Map<string, string>(); const bad = new Set<string>();
-  rooms.forEach((r) => { for (let dx = 0; dx < r.w; dx++) for (let dy = 0; dy < r.h; dy++) { const k = `${r.x + dx},${r.y + dy}`; const e = g.get(k); if (e) { bad.add(e); bad.add(r.id); } else g.set(k, r.id); } });
-  return bad;
+const CATEGORIES: Category[] = ["living", "room", "water", "storage", "free"];
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+const snap = (value: number): number => Math.round(value * 2) / 2;
+const uid = (prefix: string): string => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+const deepClone = <T extends object>(floors: Record<Floor, T[]>): Record<Floor, T[]> => ({
+  1: floors[1].map((v) => ({ ...v })),
+  2: floors[2].map((v) => ({ ...v })),
+});
+
+const getOverlapRooms = (rooms: Room[]): Set<string> => {
+  const grid = new Map<string, string>();
+  const overlaps = new Set<string>();
+
+  rooms.forEach((room) => {
+    for (let dx = 0; dx < room.w; dx += 1) {
+      for (let dy = 0; dy < room.h; dy += 1) {
+        const key = `${room.x + dx},${room.y + dy}`;
+        const existing = grid.get(key);
+        if (existing) {
+          overlaps.add(existing);
+          overlaps.add(room.id);
+        } else {
+          grid.set(key, room.id);
+        }
+      }
+    }
+  });
+
+  return overlaps;
 };
 
 function App() {
-  const [rooms, setRooms] = useState<Record<Floor, Room[]>>(() => clone(INIT_ROOMS));
-  const [doors, setDoors] = useState<Record<Floor, Door[]>>(() => clone(INIT_DOORS));
+  const [rooms, setRooms] = useState<Record<Floor, Room[]>>(() => deepClone(INITIAL_ROOMS));
+  const [doors, setDoors] = useState<Record<Floor, Door[]>>(() => deepClone(INITIAL_DOORS));
   const [floor, setFloor] = useState<Floor>(1);
   const [mode, setMode] = useState<Mode>("room");
-  const [sr, setSr] = useState<string | null>(null);
-  const [sd, setSd] = useState<string | null>(null);
-  const [drag, setDrag] = useState<Drag>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [selectedDoorId, setSelectedDoorId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragState>(null);
   const [brushType, setBrushType] = useState<DoorType>("hinged-r");
   const [brushOrient, setBrushOrient] = useState<DoorOrient>("v");
   const [brushWidth, setBrushWidth] = useState<1 | 2 | 3 | 4>(2);
   const [toast, setToast] = useState("");
+
   const svgRef = useRef<SVGSVGElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const curR = rooms[floor]; const curD = doors[floor];
-  const selR = curR.find((r) => r.id === sr) ?? null;
-  const selD = curD.find((d) => d.id === sd) ?? null;
-  const overlaps = useMemo(() => badRooms(curR), [curR]);
-  const total = useMemo(() => curR.reduce((s, r) => s + (r.w * r.h) / 2, 0), [curR]);
-  const toastMsg = (s: string): void => { setToast(s); window.setTimeout(() => setToast(""), 1800); };
-  const p = useCallback((cx: number, cy: number): { x: number; y: number } => {
-    const r = svgRef.current?.getBoundingClientRect(); if (!r) return { x: 0, y: 0 };
-    return { x: (cx - r.left) / C, y: (cy - r.top) / C };
+  const currentRooms = rooms[floor];
+  const currentDoors = doors[floor];
+  const selectedRoom = currentRooms.find((r) => r.id === selectedRoomId) ?? null;
+  const selectedDoor = currentDoors.find((d) => d.id === selectedDoorId) ?? null;
+
+  const overlaps = useMemo(() => getOverlapRooms(currentRooms), [currentRooms]);
+  const totalTatami = useMemo(
+    () => currentRooms.reduce((sum, room) => sum + (room.w * room.h) / 2, 0),
+    [currentRooms],
+  );
+
+  const showToast = (message: string): void => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 1800);
+  };
+
+  const getGridPoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: (clientX - rect.left) / CELL,
+      y: (clientY - rect.top) / CELL,
+    };
   }, []);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(KEY); if (!raw) return;
-      const d = JSON.parse(raw) as Saved;
-      if (d.version !== 1 || !d.rooms || !d.doors) return;
-      setRooms(clone(d.rooms)); setDoors(clone(d.doors)); toastMsg("restored");
-    } catch { /* ignore */ }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as SavedState;
+      if (parsed.version !== 1 || !parsed.rooms || !parsed.doors) return;
+      setRooms(deepClone(parsed.rooms));
+      setDoors(deepClone(parsed.doors));
+      showToast("前回の状態を復元しました");
+    } catch {
+      showToast("保存データの読み込みに失敗しました");
+    }
   }, []);
-  useEffect(() => { const d: Saved = { version: 1, rooms, doors }; localStorage.setItem(KEY, JSON.stringify(d)); }, [rooms, doors]);
 
   useEffect(() => {
-    const mv = (e: PointerEvent): void => {
-      if (!drag) return; const { x, y } = p(e.clientX, e.clientY);
+    const payload: SavedState = { version: 1, rooms, doors };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [rooms, doors]);
+
+  useEffect(() => {
+    const handleMove = (event: PointerEvent): void => {
+      if (!drag) return;
+      const point = getGridPoint(event.clientX, event.clientY);
+
       if (drag.kind === "room") {
-        setRooms((s) => ({ ...s, [floor]: s[floor].map((r) => r.id !== drag.id ? r : { ...r, x: clamp(Math.round(x - drag.ox), 0, GW - r.w), y: clamp(Math.round(y - drag.oy), 0, GH - r.h) }) }));
+        setRooms((state) => ({
+          ...state,
+          [floor]: state[floor].map((room) =>
+            room.id !== drag.id
+              ? room
+              : {
+                  ...room,
+                  x: clamp(Math.round(point.x - drag.ox), 0, GRID_W - room.w),
+                  y: clamp(Math.round(point.y - drag.oy), 0, GRID_H - room.h),
+                },
+          ),
+        }));
       } else {
-        setDoors((s) => ({ ...s, [floor]: s[floor].map((d) => d.id !== drag.id ? d : { ...d, x: clamp(snap(x - drag.ox), 0, GW), y: clamp(snap(y - drag.oy), 0, GH) }) }));
+        setDoors((state) => ({
+          ...state,
+          [floor]: state[floor].map((door) =>
+            door.id !== drag.id
+              ? door
+              : {
+                  ...door,
+                  x: clamp(snap(point.x - drag.ox), 0, GRID_W),
+                  y: clamp(snap(point.y - drag.oy), 0, GRID_H),
+                },
+          ),
+        }));
       }
     };
-    const up = (): void => setDrag(null);
-    window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
-    return () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
-  }, [drag, floor, p]);
+
+    const handleUp = (): void => setDrag(null);
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [drag, floor, getGridPoint]);
 
   const addRoom = (): void => {
-    const n: Room = { id: uid("room"), name: `Room ${curR.length + 1}`, cat: "room", x: 0, y: 0, w: 3, h: 3 };
-    setRooms((s) => ({ ...s, [floor]: [...s[floor], n] })); setSr(n.id); setSd(null); toastMsg("room added");
+    const newRoom: Room = {
+      id: uid("room"),
+      name: `部屋${currentRooms.length + 1}`,
+      category: "room",
+      x: 0,
+      y: 0,
+      w: 3,
+      h: 3,
+    };
+    setRooms((state) => ({ ...state, [floor]: [...state[floor], newRoom] }));
+    setSelectedRoomId(newRoom.id);
+    setSelectedDoorId(null);
+    showToast("部屋を追加しました");
   };
-  const delRoom = (): void => { if (!sr) return; setRooms((s) => ({ ...s, [floor]: s[floor].filter((r) => r.id !== sr) })); setSr(null); toastMsg("room deleted"); };
-  const delDoor = (): void => { if (!sd) return; setDoors((s) => ({ ...s, [floor]: s[floor].filter((d) => d.id !== sd) })); setSd(null); toastMsg("door deleted"); };
-  const rotRoom = (): void => { if (!sr) return; setRooms((s) => ({ ...s, [floor]: s[floor].map((r) => r.id !== sr ? r : (r.x + r.h <= GW && r.y + r.w <= GH ? { ...r, w: r.h, h: r.w } : r)) })); };
+
+  const deleteRoom = (): void => {
+    if (!selectedRoomId) return;
+    setRooms((state) => ({
+      ...state,
+      [floor]: state[floor].filter((room) => room.id !== selectedRoomId),
+    }));
+    setSelectedRoomId(null);
+    showToast("部屋を削除しました");
+  };
+
+  const deleteDoor = (): void => {
+    if (!selectedDoorId) return;
+    setDoors((state) => ({
+      ...state,
+      [floor]: state[floor].filter((door) => door.id !== selectedDoorId),
+    }));
+    setSelectedDoorId(null);
+    showToast("扉を削除しました");
+  };
+
+  const rotateRoom = (): void => {
+    if (!selectedRoomId) return;
+    setRooms((state) => ({
+      ...state,
+      [floor]: state[floor].map((room) => {
+        if (room.id !== selectedRoomId) return room;
+        if (room.x + room.h > GRID_W || room.y + room.w > GRID_H) return room;
+        return { ...room, w: room.h, h: room.w };
+      }),
+    }));
+  };
+
   const resizeRoom = (dw: number, dh: number): void => {
-    if (!sr) return;
-    setRooms((s) => ({ ...s, [floor]: s[floor].map((r) => {
-      if (r.id !== sr) return r; const w = clamp(r.w + dw, 1, GW); const h = clamp(r.h + dh, 1, GH);
-      return r.x + w > GW || r.y + h > GH ? r : { ...r, w, h };
-    }) }));
+    if (!selectedRoomId) return;
+    setRooms((state) => ({
+      ...state,
+      [floor]: state[floor].map((room) => {
+        if (room.id !== selectedRoomId) return room;
+        const w = clamp(room.w + dw, 1, GRID_W);
+        const h = clamp(room.h + dh, 1, GRID_H);
+        if (room.x + w > GRID_W || room.y + h > GRID_H) return room;
+        return { ...room, w, h };
+      }),
+    }));
   };
 
-  const clickCanvas = (e: React.MouseEvent<SVGSVGElement>): void => {
-    if (mode === "room") { setSr(null); setSd(null); return; }
-    const { x, y } = p(e.clientX, e.clientY);
-    const n: Door = { id: uid("door"), x: clamp(snap(x), 0, GW), y: clamp(snap(y), 0, GH), orient: brushOrient, type: brushType, width: brushWidth };
-    setDoors((s) => ({ ...s, [floor]: [...s[floor], n] })); setSd(n.id); setSr(null); toastMsg("door added");
+  const addDoorOnCanvas = (event: React.MouseEvent<SVGSVGElement>): void => {
+    if (mode === "room") {
+      setSelectedRoomId(null);
+      setSelectedDoorId(null);
+      return;
+    }
+
+    const point = getGridPoint(event.clientX, event.clientY);
+    const newDoor: Door = {
+      id: uid("door"),
+      x: clamp(snap(point.x), 0, GRID_W),
+      y: clamp(snap(point.y), 0, GRID_H),
+      orient: brushOrient,
+      type: brushType,
+      width: brushWidth,
+    };
+
+    setDoors((state) => ({ ...state, [floor]: [...state[floor], newDoor] }));
+    setSelectedDoorId(newDoor.id);
+    setSelectedRoomId(null);
+    showToast("扉を追加しました");
   };
 
-  const saveJson = (): void => {
-    const blob = new Blob([JSON.stringify({ version: 1, rooms, doors }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob); const a = document.createElement("a");
-    a.href = url; a.download = "floorplanly-plan.json"; document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  const exportJson = (): void => {
+    const payload: SavedState = { version: 1, rooms, doors };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "間取りデータ.json";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    showToast("JSONを書き出しました");
   };
-  const loadJson = (f: File): void => {
-    const r = new FileReader();
-    r.onload = () => { try { const d = JSON.parse(String(r.result)) as Saved; if (d.version !== 1) throw new Error(); setRooms(clone(d.rooms)); setDoors(clone(d.doors)); setSr(null); setSd(null); toastMsg("json loaded"); } catch { toastMsg("invalid json"); } };
-    r.readAsText(f);
+
+  const importJson = (file: File): void => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as SavedState;
+        if (parsed.version !== 1) throw new Error("invalid");
+        setRooms(deepClone(parsed.rooms));
+        setDoors(deepClone(parsed.doors));
+        setSelectedRoomId(null);
+        setSelectedDoorId(null);
+        showToast("JSONを読み込みました");
+      } catch {
+        showToast("JSONの形式が正しくありません");
+      }
+    };
+    reader.readAsText(file);
   };
 
   return (
     <div className="app">
       {toast && <div className="toast">{toast}</div>}
-      <header className="head"><h1>FloorPlanly</h1><p>{floor}F / {total.toFixed(1)} tatami</p></header>
+
+      <header className="head">
+        <h1>間取りシミュレータ FloorPlanly</h1>
+        <p>
+          {floor}F / 合計 {totalTatami.toFixed(1)} 帖
+        </p>
+      </header>
+
       <div className="tools">
-        <button className={floor === 1 ? "on" : ""} onClick={() => { setFloor(1); setSr(null); setSd(null); }}>1F</button>
-        <button className={floor === 2 ? "on" : ""} onClick={() => { setFloor(2); setSr(null); setSd(null); }}>2F</button>
-        <button className={mode === "room" ? "on" : ""} onClick={() => { setMode("room"); setSd(null); }}>Room</button>
-        <button className={mode === "door" ? "on" : ""} onClick={() => { setMode("door"); setSr(null); }}>Door</button>
-        <button onClick={addRoom}>Add Room</button><button onClick={delRoom} disabled={!selR}>Delete Room</button><button onClick={delDoor} disabled={!selD}>Delete Door</button>
-        <button onClick={saveJson}>Export</button><button onClick={() => fileRef.current?.click()}>Import</button>
-        <input ref={fileRef} type="file" accept="application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) loadJson(f); e.target.value = ""; }} />
+        <button
+          className={floor === 1 ? "on" : ""}
+          onClick={() => {
+            setFloor(1);
+            setSelectedRoomId(null);
+            setSelectedDoorId(null);
+          }}
+        >
+          1F
+        </button>
+        <button
+          className={floor === 2 ? "on" : ""}
+          onClick={() => {
+            setFloor(2);
+            setSelectedRoomId(null);
+            setSelectedDoorId(null);
+          }}
+        >
+          2F
+        </button>
+
+        <button
+          className={mode === "room" ? "on" : ""}
+          onClick={() => {
+            setMode("room");
+            setSelectedDoorId(null);
+          }}
+        >
+          部屋モード
+        </button>
+        <button
+          className={mode === "door" ? "on" : ""}
+          onClick={() => {
+            setMode("door");
+            setSelectedRoomId(null);
+          }}
+        >
+          扉モード
+        </button>
+
+        <button onClick={addRoom}>部屋を追加</button>
+        <button onClick={deleteRoom} disabled={!selectedRoom}>
+          部屋を削除
+        </button>
+        <button onClick={deleteDoor} disabled={!selectedDoor}>
+          扉を削除
+        </button>
+
+        <button onClick={exportJson}>JSON書き出し</button>
+        <button onClick={() => fileRef.current?.click()}>JSON読み込み</button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) importJson(file);
+            event.target.value = "";
+          }}
+        />
       </div>
+
       <main className="main">
         <section className="canvasWrap">
-          <svg ref={svgRef} className="canvas" width={W} height={H} viewBox={`0 0 ${W} ${H}`} onClick={clickCanvas}>
-            {Array.from({ length: GW + 1 }).map((_, i) => <line key={`x-${i}`} x1={i * C} y1={0} x2={i * C} y2={H} stroke="rgba(138,167,184,.35)" strokeWidth="1" />)}
-            {Array.from({ length: GH + 1 }).map((_, i) => <line key={`y-${i}`} x1={0} y1={i * C} x2={W} y2={i * C} stroke="rgba(138,167,184,.35)" strokeWidth="1" />)}
-            {curR.map((r) => {
-              const x = r.x * C; const y = r.y * C; const w = r.w * C; const h = r.h * C; const sel = sr === r.id;
-              const fill = r.cat === "living" ? "rgba(243,171,97,.3)" : r.cat === "water" ? "rgba(101,189,233,.3)" : r.cat === "storage" ? "rgba(167,133,205,.3)" : r.cat === "free" ? "rgba(96,194,171,.3)" : "rgba(131,197,145,.3)";
+          <svg
+            ref={svgRef}
+            className="canvas"
+            width={CANVAS_W}
+            height={CANVAS_H}
+            viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
+            onClick={addDoorOnCanvas}
+          >
+            {Array.from({ length: GRID_W + 1 }).map((_, i) => (
+              <line
+                key={`x-${i}`}
+                x1={i * CELL}
+                y1={0}
+                x2={i * CELL}
+                y2={CANVAS_H}
+                stroke="rgba(138,167,184,.35)"
+                strokeWidth="1"
+              />
+            ))}
+            {Array.from({ length: GRID_H + 1 }).map((_, i) => (
+              <line
+                key={`y-${i}`}
+                x1={0}
+                y1={i * CELL}
+                x2={CANVAS_W}
+                y2={i * CELL}
+                stroke="rgba(138,167,184,.35)"
+                strokeWidth="1"
+              />
+            ))}
+
+            {currentRooms.map((room) => {
+              const x = room.x * CELL;
+              const y = room.y * CELL;
+              const w = room.w * CELL;
+              const h = room.h * CELL;
+              const selected = selectedRoomId === room.id;
               return (
-                <g key={r.id} onClick={(e) => { e.stopPropagation(); setSr(r.id); setSd(null); }} onPointerDown={(e) => { if (mode !== "room") return; e.stopPropagation(); const q = p(e.clientX, e.clientY); setDrag({ kind: "room", id: r.id, ox: q.x - r.x, oy: q.y - r.y }); setSr(r.id); setSd(null); }}>
-                  <rect x={x} y={y} width={w} height={h} rx={6} fill={fill} stroke={overlaps.has(r.id) ? "#d23f3f" : sel ? "#4fd0ff" : "rgba(227,238,245,.65)"} strokeWidth={sel ? 3 : 2} />
-                  <text x={x + w / 2} y={y + h / 2 - 6} textAnchor="middle" className="name">{r.name}</text>
-                  <text x={x + w / 2} y={y + h / 2 + 11} textAnchor="middle" className="sub">{(r.w * r.h / 2).toFixed(1)} tatami</text>
+                <g
+                  key={room.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedRoomId(room.id);
+                    setSelectedDoorId(null);
+                  }}
+                  onPointerDown={(event) => {
+                    if (mode !== "room") return;
+                    event.stopPropagation();
+                    const point = getGridPoint(event.clientX, event.clientY);
+                    setDrag({ kind: "room", id: room.id, ox: point.x - room.x, oy: point.y - room.y });
+                    setSelectedRoomId(room.id);
+                    setSelectedDoorId(null);
+                  }}
+                >
+                  <rect
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    rx={6}
+                    fill={CATEGORY_COLORS[room.category]}
+                    stroke={overlaps.has(room.id) ? "#d23f3f" : selected ? "#4fd0ff" : "rgba(227,238,245,.65)"}
+                    strokeWidth={selected ? 3 : 2}
+                  />
+                  <text x={x + w / 2} y={y + h / 2 - 6} textAnchor="middle" className="name">
+                    {room.name}
+                  </text>
+                  <text x={x + w / 2} y={y + h / 2 + 11} textAnchor="middle" className="sub">
+                    {(room.w * room.h / 2).toFixed(1)} 帖
+                  </text>
                 </g>
               );
             })}
-            {curD.map((d) => {
-              const x = d.x * C; const y = d.y * C; const len = (d.width * C) / 2; const sel = sd === d.id;
+
+            {currentDoors.map((door) => {
+              const x = door.x * CELL;
+              const y = door.y * CELL;
+              const len = (door.width * CELL) / 2;
+              const selected = selectedDoorId === door.id;
               return (
-                <g key={d.id} onClick={(e) => { e.stopPropagation(); setSd(d.id); setSr(null); }} onPointerDown={(e) => { if (mode !== "door") return; e.stopPropagation(); const q = p(e.clientX, e.clientY); setDrag({ kind: "door", id: d.id, ox: q.x - d.x, oy: q.y - d.y }); setSd(d.id); setSr(null); }}>
-                  <rect x={d.orient === "h" ? x - 4 : x - 6} y={d.orient === "h" ? y - 6 : y - 4} width={d.orient === "h" ? len + 10 : 12} height={d.orient === "h" ? 12 : len + 10} fill="rgba(255,255,255,.02)" />
-                  {d.orient === "h" ? <line x1={x} y1={y} x2={x + len} y2={y} stroke={sel ? "#4fd0ff" : "#ffe5b1"} strokeWidth={sel ? 2 : 1.4} /> : <line x1={x} y1={y} x2={x} y2={y + len} stroke={sel ? "#4fd0ff" : "#ffe5b1"} strokeWidth={sel ? 2 : 1.4} />}
+                <g
+                  key={door.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedDoorId(door.id);
+                    setSelectedRoomId(null);
+                  }}
+                  onPointerDown={(event) => {
+                    if (mode !== "door") return;
+                    event.stopPropagation();
+                    const point = getGridPoint(event.clientX, event.clientY);
+                    setDrag({ kind: "door", id: door.id, ox: point.x - door.x, oy: point.y - door.y });
+                    setSelectedDoorId(door.id);
+                    setSelectedRoomId(null);
+                  }}
+                >
+                  <rect
+                    x={door.orient === "h" ? x - 4 : x - 6}
+                    y={door.orient === "h" ? y - 6 : y - 4}
+                    width={door.orient === "h" ? len + 10 : 12}
+                    height={door.orient === "h" ? 12 : len + 10}
+                    fill="rgba(255,255,255,.02)"
+                  />
+                  {door.orient === "h" ? (
+                    <line
+                      x1={x}
+                      y1={y}
+                      x2={x + len}
+                      y2={y}
+                      stroke={selected ? "#4fd0ff" : "#ffe5b1"}
+                      strokeWidth={selected ? 2 : 1.4}
+                    />
+                  ) : (
+                    <line
+                      x1={x}
+                      y1={y}
+                      x2={x}
+                      y2={y + len}
+                      stroke={selected ? "#4fd0ff" : "#ffe5b1"}
+                      strokeWidth={selected ? 2 : 1.4}
+                    />
+                  )}
                 </g>
               );
             })}
-            <rect x={1} y={1} width={W - 2} height={H - 2} fill="none" stroke="rgba(216,235,247,.35)" strokeWidth={2} rx={9} />
+
+            <rect
+              x={1}
+              y={1}
+              width={CANVAS_W - 2}
+              height={CANVAS_H - 2}
+              fill="none"
+              stroke="rgba(216,235,247,.35)"
+              strokeWidth={2}
+              rx={9}
+            />
           </svg>
         </section>
+
         <aside className="side">
-          <h2>Inspector</h2>
+          <h2>編集パネル</h2>
           {mode === "room" ? (
-            selR ? <div className="card"><label>Name<input value={selR.name} onChange={(e) => setRooms((s) => ({ ...s, [floor]: s[floor].map((r) => r.id === selR.id ? { ...r, name: e.target.value } : r) }))} /></label><label>Category<select value={selR.cat} onChange={(e) => setRooms((s) => ({ ...s, [floor]: s[floor].map((r) => r.id === selR.id ? { ...r, cat: e.target.value as Cat } : r) }))}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></label><p>x:{selR.x} y:{selR.y} w:{selR.w} h:{selR.h}</p><div className="row"><button onClick={() => resizeRoom(1, 0)}>W+</button><button onClick={() => resizeRoom(-1, 0)}>W-</button><button onClick={() => resizeRoom(0, 1)}>H+</button><button onClick={() => resizeRoom(0, -1)}>H-</button><button onClick={rotRoom}>Rotate</button></div></div> : <div className="card"><p>Select a room.</p></div>
+            selectedRoom ? (
+              <div className="card">
+                <label>
+                  部屋名
+                  <input
+                    value={selectedRoom.name}
+                    onChange={(event) =>
+                      setRooms((state) => ({
+                        ...state,
+                        [floor]: state[floor].map((room) =>
+                          room.id === selectedRoom.id ? { ...room, name: event.target.value } : room,
+                        ),
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  種別
+                  <select
+                    value={selectedRoom.category}
+                    onChange={(event) =>
+                      setRooms((state) => ({
+                        ...state,
+                        [floor]: state[floor].map((room) =>
+                          room.id === selectedRoom.id
+                            ? { ...room, category: event.target.value as Category }
+                            : room,
+                        ),
+                      }))
+                    }
+                  >
+                    {CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {CATEGORY_LABELS[category]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <p>
+                  x:{selectedRoom.x} y:{selectedRoom.y} w:{selectedRoom.w} h:{selectedRoom.h}
+                </p>
+
+                <div className="row">
+                  <button onClick={() => resizeRoom(1, 0)}>幅+</button>
+                  <button onClick={() => resizeRoom(-1, 0)}>幅-</button>
+                  <button onClick={() => resizeRoom(0, 1)}>奥行+</button>
+                  <button onClick={() => resizeRoom(0, -1)}>奥行-</button>
+                  <button onClick={rotateRoom}>回転</button>
+                </div>
+              </div>
+            ) : (
+              <div className="card">
+                <p>部屋を選択すると編集できます。</p>
+              </div>
+            )
           ) : (
-            <div className="card"><label>Door type<select value={brushType} onChange={(e) => setBrushType(e.target.value as DoorType)}>{DOOR_TYPES.map((t) => <option key={t}>{t}</option>)}</select></label><label>Orientation<select value={brushOrient} onChange={(e) => setBrushOrient(e.target.value as DoorOrient)}><option value="v">vertical</option><option value="h">horizontal</option></select></label><label>Width<input type="range" min={1} max={4} step={1} value={brushWidth} onChange={(e) => setBrushWidth(Number(e.target.value) as 1 | 2 | 3 | 4)} /></label>{selD ? <div><p>x:{selD.x} y:{selD.y}</p><label>Type<select value={selD.type} onChange={(e) => setDoors((s) => ({ ...s, [floor]: s[floor].map((d) => d.id === selD.id ? { ...d, type: e.target.value as DoorType } : d) }))}>{DOOR_TYPES.map((t) => <option key={t}>{t}</option>)}</select></label><label>Orient<select value={selD.orient} onChange={(e) => setDoors((s) => ({ ...s, [floor]: s[floor].map((d) => d.id === selD.id ? { ...d, orient: e.target.value as DoorOrient } : d) }))}><option value="v">vertical</option><option value="h">horizontal</option></select></label></div> : <p>Click canvas to add door.</p>}</div>
+            <div className="card">
+              <label>
+                扉タイプ
+                <select
+                  value={brushType}
+                  onChange={(event) => setBrushType(event.target.value as DoorType)}
+                >
+                  {DOOR_TYPES.map((doorType) => (
+                    <option key={doorType} value={doorType}>
+                      {DOOR_TYPE_LABELS[doorType]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                向き
+                <select
+                  value={brushOrient}
+                  onChange={(event) => setBrushOrient(event.target.value as DoorOrient)}
+                >
+                  <option value="v">縦</option>
+                  <option value="h">横</option>
+                </select>
+              </label>
+
+              <label>
+                幅
+                <input
+                  type="range"
+                  min={1}
+                  max={4}
+                  step={1}
+                  value={brushWidth}
+                  onChange={(event) => setBrushWidth(Number(event.target.value) as 1 | 2 | 3 | 4)}
+                />
+              </label>
+
+              {selectedDoor ? (
+                <div>
+                  <p>
+                    x:{selectedDoor.x} y:{selectedDoor.y}
+                  </p>
+
+                  <label>
+                    選択中タイプ
+                    <select
+                      value={selectedDoor.type}
+                      onChange={(event) =>
+                        setDoors((state) => ({
+                          ...state,
+                          [floor]: state[floor].map((door) =>
+                            door.id === selectedDoor.id
+                              ? { ...door, type: event.target.value as DoorType }
+                              : door,
+                          ),
+                        }))
+                      }
+                    >
+                      {DOOR_TYPES.map((doorType) => (
+                        <option key={doorType} value={doorType}>
+                          {DOOR_TYPE_LABELS[doorType]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    選択中の向き
+                    <select
+                      value={selectedDoor.orient}
+                      onChange={(event) =>
+                        setDoors((state) => ({
+                          ...state,
+                          [floor]: state[floor].map((door) =>
+                            door.id === selectedDoor.id
+                              ? { ...door, orient: event.target.value as DoorOrient }
+                              : door,
+                          ),
+                        }))
+                      }
+                    >
+                      <option value="v">縦</option>
+                      <option value="h">横</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    選択中の幅
+                    <input
+                      type="range"
+                      min={1}
+                      max={4}
+                      step={1}
+                      value={selectedDoor.width}
+                      onChange={(event) =>
+                        setDoors((state) => ({
+                          ...state,
+                          [floor]: state[floor].map((door) =>
+                            door.id === selectedDoor.id
+                              ? { ...door, width: Number(event.target.value) as 1 | 2 | 3 | 4 }
+                              : door,
+                          ),
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              ) : (
+                <p>キャンバスをクリックすると扉を追加できます。</p>
+              )}
+            </div>
           )}
         </aside>
       </main>
